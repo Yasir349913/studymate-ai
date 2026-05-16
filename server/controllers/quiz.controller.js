@@ -1,6 +1,5 @@
 const QuizAttempt = require("../models/QuizAttempt");
 const Document = require("../models/Document");
-const { ragGetAnswer } = require("../services/rag.service");
 const { getChatResponse } = require("../services/openai.service");
 const {
   retrieveChunks,
@@ -16,60 +15,91 @@ const buildQuizPrompt = (context, count, difficulty) => {
     mixed: "Mix of factual, conceptual, and application questions",
   };
 
-  return `You are a quiz generator. Based on the following study notes, generate exactly ${count} multiple choice questions.
+  return `Generate exactly ${count} multiple choice questions based on the study notes below.
 
 Difficulty: ${difficulty} — ${difficultyGuide[difficulty]}
 
 Study Notes:
 ${context}
 
-IMPORTANT: Respond with ONLY a valid JSON array. No explanation, no markdown, no extra text.
+Return ONLY a valid JSON array. No markdown. No explanation. No extra text before or after.
 
-Format:
 [
   {
-    "question": "Question text here?",
+    "question": "Question text?",
     "options": ["Option A", "Option B", "Option C", "Option D"],
     "correctAnswer": 0,
-    "explanation": "Why this answer is correct",
-    "difficulty": "${difficulty === "mixed" ? "easy|medium|hard" : difficulty}"
+    "explanation": "Why this is correct",
+    "difficulty": "${difficulty === "mixed" ? "easy" : difficulty}"
   }
 ]
 
-Rules:
-- correctAnswer is the INDEX (0-3) of the correct option
-- Each question must have exactly 4 options
-- Explanation must be clear and educational
-- Questions must be based ONLY on the provided notes
-- Generate exactly ${count} questions`;
+Strict rules:
+- correctAnswer = index 0 to 3
+- Exactly 4 options per question
+- Based ONLY on provided notes
+- Return exactly ${count} questions
+- ONLY the JSON array — nothing else`;
 };
 
 // ── Parse AI Response ─────────────────────────────────
 const parseQuizResponse = (response) => {
+  if (!response || typeof response !== "string") {
+    console.error("Parse error: Empty or invalid response");
+    return null;
+  }
+
   try {
-    // Markdown code blocks remove karo agar hain
-    const cleaned = response
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
+    // Markdown + extra text remove karo
+    let cleaned = response
+      .replace(/```json/gi, "")
+      .replace(/```/gi, "")
       .trim();
+
+    // JSON array boundaries find karo
+    const startIndex = cleaned.indexOf("[");
+    const endIndex = cleaned.lastIndexOf("]");
+
+    if (startIndex === -1 || endIndex === -1) {
+      console.error("Parse error: No JSON array found");
+      console.error("Response:", cleaned.slice(0, 300));
+      return null;
+    }
+
+    cleaned = cleaned.slice(startIndex, endIndex + 1);
+
+    // Invalid characters fix karo
+    // AI kabhi kabhi smart quotes use karta hai
+    cleaned = cleaned
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"');
 
     const parsed = JSON.parse(cleaned);
 
-    // Validate karo
-    if (!Array.isArray(parsed)) throw new Error("Not an array");
+    if (!Array.isArray(parsed)) {
+      console.error("Parse error: Not an array");
+      return null;
+    }
 
-    return parsed.filter(
+    const valid = parsed.filter(
       (q) =>
         q.question &&
+        typeof q.question === "string" &&
         Array.isArray(q.options) &&
         q.options.length === 4 &&
+        q.options.every((o) => typeof o === "string") &&
         typeof q.correctAnswer === "number" &&
         q.correctAnswer >= 0 &&
         q.correctAnswer <= 3 &&
-        q.explanation,
+        q.explanation &&
+        typeof q.explanation === "string",
     );
+
+    console.log(`Valid questions: ${valid.length}/${parsed.length}`);
+    return valid.length > 0 ? valid : null;
   } catch (error) {
-    console.error("Quiz parse error:", error.message);
+    console.error("Parse error:", error.message);
+    console.error("Response preview:", response?.slice(0, 300));
     return null;
   }
 };
@@ -80,7 +110,7 @@ exports.generateQuiz = async (req, res) => {
     const { documentId, difficulty, count } = req.body;
     const userId = req.userId;
 
-    // Document exist karta hai aur user ka hai?
+    // Document check
     const doc = await Document.findOne({ _id: documentId, userId });
     if (!doc) {
       return res.status(404).json({ error: "Document not found" });
@@ -89,11 +119,11 @@ exports.generateQuiz = async (req, res) => {
       return res.status(400).json({ error: "Document is still processing" });
     }
 
-    // Top chunks nikalo — zyada chunks = better quiz
+    // Chunks nikalo
     const chunks = await retrieveChunks(
       "main concepts key terms important topics definitions",
       documentId,
-      15, // 15 chunks for comprehensive quiz
+      15,
     );
 
     if (chunks.length === 0) {
@@ -105,23 +135,37 @@ exports.generateQuiz = async (req, res) => {
     const context = formatContext(chunks);
     const prompt = buildQuizPrompt(context, count, difficulty);
 
-    // AI se MCQs generate karo
-    const aiResponse = await getChatResponse(
-      [{ role: "user", content: prompt }],
-      "You are an expert quiz generator. Always respond with valid JSON only.",
-    );
+    // Retry logic — 3 attempts
+    let questions = null;
 
-    // Parse karo
-    const questions = parseQuizResponse(aiResponse);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      console.log(`Quiz generation attempt ${attempt}/3`);
 
-    if (!questions || questions.length === 0) {
-      return res
-        .status(500)
-        .json({ error: "Failed to generate quiz. Please try again." });
+      const aiResponse = await getChatResponse(
+        [{ role: "user", content: prompt }],
+        "You are a quiz generator. Respond with valid JSON array only. No markdown. No extra text.",
+      );
+
+      console.log("Response length:", aiResponse?.length);
+      console.log("Response preview:", aiResponse?.slice(0, 200));
+
+      questions = parseQuizResponse(aiResponse);
+
+      if (questions && questions.length > 0) {
+        console.log(`✅ Quiz generated on attempt ${attempt}`);
+        break;
+      }
+
+      console.log(`Attempt ${attempt} failed — retrying...`);
     }
 
-    // DB mein save karo — userAnswer remove karke
-    // User ne abhi answer nahi diya
+    if (!questions || questions.length === 0) {
+      return res.status(500).json({
+        error: "Failed to generate quiz. Please try again.",
+      });
+    }
+
+    // Clean — userAnswer null
     const cleanQuestions = questions.map((q) => ({
       question: q.question,
       options: q.options,
@@ -131,6 +175,7 @@ exports.generateQuiz = async (req, res) => {
       userAnswer: null,
     }));
 
+    // DB save
     const quiz = await QuizAttempt.create({
       userId,
       documentId,
@@ -140,13 +185,11 @@ exports.generateQuiz = async (req, res) => {
       status: "in_progress",
     });
 
-    // Frontend ko questions bhejo — correctAnswer hide karo
-    // User ko answers pehle se nahi pata hona chahiye
+    // Frontend ko correctAnswer hide karke bhejo
     const questionsForUser = cleanQuestions.map((q) => ({
       question: q.question,
       options: q.options,
       difficulty: q.difficulty,
-      // correctAnswer aur explanation nahi bhej rahe
     }));
 
     res.status(201).json({
@@ -176,15 +219,28 @@ exports.submitQuiz = async (req, res) => {
       return res.status(400).json({ error: "Quiz already submitted" });
     }
 
-    // Answers save karo aur score calculate karo
-    let correctCount = 0;
+    // Sab null karo pehle
+    quiz.questions.forEach((q) => {
+      q.userAnswer = null;
+    });
 
+    // Answers apply karo
     answers.forEach(({ questionIndex, answer }) => {
-      if (questionIndex < quiz.questions.length) {
+      if (
+        questionIndex >= 0 &&
+        questionIndex < quiz.questions.length &&
+        answer >= 0 &&
+        answer <= 3
+      ) {
         quiz.questions[questionIndex].userAnswer = answer;
-        if (answer === quiz.questions[questionIndex].correctAnswer) {
-          correctCount++;
-        }
+      }
+    });
+
+    // Score calculate
+    let correctCount = 0;
+    quiz.questions.forEach((q) => {
+      if (q.userAnswer !== null && q.userAnswer === q.correctAnswer) {
+        correctCount++;
       }
     });
 
@@ -196,7 +252,7 @@ exports.submitQuiz = async (req, res) => {
     quiz.completedAt = new Date();
     await quiz.save();
 
-    // Ab correctAnswer aur explanation bhejo — quiz complete ho gaya
+    // Review
     const reviewQuestions = quiz.questions.map((q) => ({
       question: q.question,
       options: q.options,
@@ -204,14 +260,17 @@ exports.submitQuiz = async (req, res) => {
       explanation: q.explanation,
       userAnswer: q.userAnswer,
       isCorrect: q.userAnswer === q.correctAnswer,
+      isSkipped: q.userAnswer === null,
       difficulty: q.difficulty,
     }));
 
     res.json({
       score,
       correctAnswers: correctCount,
+      skippedQuestions: quiz.questions.filter((q) => q.userAnswer === null)
+        .length,
       totalQuestions: quiz.totalQuestions,
-      passed: score >= 60, // 60% passing marks
+      passed: score >= 60,
       questions: reviewQuestions,
     });
   } catch (error) {
@@ -230,7 +289,7 @@ exports.getQuizHistory = async (req, res) => {
       .select(
         "documentId difficulty score totalQuestions correctAnswers completedAt",
       )
-      .populate("documentId", "originalName") // Document name bhi chahiye
+      .populate("documentId", "originalName")
       .sort({ completedAt: -1 })
       .limit(20)
       .lean();

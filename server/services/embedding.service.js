@@ -88,12 +88,41 @@ const storeEmbeddings = async (chunks, documentId) => {
 const deleteEmbeddings = async (documentId) => {
   const index = getIndex();
 
-  // Pinecone mein filter se delete karo
-  await index.deleteMany({
-    filter: { documentId: documentId },
-  });
+  try {
+    // Step 1: Pehle is document ke sab chunk IDs fetch karo
+    // Hum jaante hain IDs ka format: documentId_chunk_0, 1, 2...
+    // Pinecone se stats lo — kitne vectors hain
+    const stats = await index.describeIndexStats();
+    console.log('Total vectors in index:', stats.totalRecordCount);
 
-  console.log(`Deleted embeddings for doc ${documentId}`);
+    // Step 2: Query se IDs nikalo
+    // Dummy vector se query karo — filter ke saath
+    const dummyVector = new Array(1536).fill(0);
+    const results = await index.query({
+      vector:          dummyVector,
+      topK:            1000, // Max fetch
+      filter:          { documentId: { $eq: documentId } },
+      includeMetadata: false,
+      includeValues:   false,
+    });
+
+    if (results.matches.length === 0) {
+      console.log(`No vectors found for doc ${documentId}`);
+      return;
+    }
+
+    // Step 3: IDs se delete karo
+    const ids = results.matches.map((m) => m.id);
+    console.log(`Deleting ${ids.length} vectors for doc ${documentId}`);
+
+    await index.deleteMany(ids);
+
+    console.log(`✅ Deleted ${ids.length} vectors for doc ${documentId}`);
+
+  } catch (error) {
+    console.error('Delete embeddings error:', error.message);
+    throw error;
+  }
 };
 
 module.exports = {

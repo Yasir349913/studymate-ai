@@ -6,11 +6,12 @@ const {
   validateSubmitQuiz,
   validateQuizId,
 } = require("../validators/quiz.validator");
+const { quizLimiter } = require("../middleware/rateLimiter");
 
 const router = express.Router();
 router.use(auth);
 
-router.post("/", validateGenerateQuiz, controller.generateQuiz);
+router.post("/", quizLimiter, validateGenerateQuiz, controller.generateQuiz);
 router.post(
   "/:quizId/submit",
   validateQuizId,

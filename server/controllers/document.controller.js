@@ -1,4 +1,7 @@
 const Document = require("../models/Document");
+const QuizAttempt = require("../models/QuizAttempt");
+const Flashcard = require("../models/Flashcard");
+const Chat = require("../models/Chat");
 const { deleteFile, getFileType } = require("../services/multer.service");
 const {
   extractText,
@@ -151,6 +154,7 @@ exports.getDocumentStatus = async (req, res) => {
 };
 
 // ── DELETE DOCUMENT ──────────────────────────────────
+// ── DELETE DOCUMENT ──────────────────────────────────
 exports.deleteDocument = async (req, res) => {
   try {
     const doc = await Document.findOneAndDelete({
@@ -162,13 +166,24 @@ exports.deleteDocument = async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
 
+    // 1. Disk se file delete karo
     deleteFile(doc.storedName);
 
-    // Pinecone se bhi delete karo
+    // 2. Pinecone se vectors delete karo
     await deleteEmbeddings(doc._id.toString());
 
-    res.json({ message: "Document deleted successfully" });
+    // 3. Related quiz attempts delete karo
+    await QuizAttempt.deleteMany({ documentId: doc._id });
+
+    // 4. Related flashcards delete karo
+    await Flashcard.deleteMany({ documentId: doc._id });
+
+    // 5. Related chats delete karo
+    await Chat.deleteMany({ documentId: doc._id, userId: req.userId });
+
+    res.json({ message: "Document and all related data deleted successfully" });
   } catch (error) {
+    console.error("Delete document error:", error);
     res.status(500).json({ error: "Server error" });
   }
 };
