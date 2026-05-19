@@ -47,7 +47,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Something went wrong" });
 });
 // Health check — Koyeb ke liye
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get("/health", (req, res) => res.json({ status: "ok" }));
 // ── Start Server ──────────────────────────────────────
+// Vercel pe app.listen nahi hota — export karo
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = app;
