@@ -46,7 +46,8 @@ app.use((err, req, res, next) => {
   console.error("ERROR:", err);
   res.status(500).json({ error: err.message || "Something went wrong" });
 });
-
+// Health check — Koyeb ke liye
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // ── Start Server ──────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
