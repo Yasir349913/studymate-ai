@@ -46,6 +46,8 @@ app.use((err, req, res, next) => {
   console.error("ERROR:", err);
   res.status(500).json({ error: err.message || "Something went wrong" });
 });
-
+app.get("/api/test", (req, res) => {
+  res.json({ ok: true });
+});
 // ── Start Server ──────────────────────────────────────
 module.exports = app;
