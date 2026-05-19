@@ -55,30 +55,44 @@ const generateEmbeddings = async (texts) => {
 const storeEmbeddings = async (chunks, documentId) => {
   const index = getIndex();
 
-  // Batch mein embed karo — sab chunks ek saath
-  const embeddings = await generateEmbeddings(chunks);
+  const EMBED_BATCH = 50; // safe for OpenRouter / OpenAI limits
+  const UPSERT_BATCH = 100;
 
-  // Pinecone record format
-  const records = embeddings.map((vector, i) => ({
-    id: `${documentId}_chunk_${i}`, // Unique ID
-    values: vector, // 1536 numbers
-    metadata: {
-      text: chunks[i], // Original text — retrieval mein wapas milega
-      documentId: documentId, // Filter ke liye — sirf is doc ke chunks
-      chunkIndex: i, // Order track karne ke liye
-    },
-  }));
+  const allRecords = [];
 
-  // Pinecone mein 100 records ek baar mein upsert karo
-  // Zyada chunks hone pe batch mein karo
-  const BATCH_SIZE = 100;
-  for (let i = 0; i < records.length; i += BATCH_SIZE) {
-    const batch = records.slice(i, i + BATCH_SIZE);
-    await index.upsert(batch);
+  // ── Step 1: Embed in batches ─────────────────────
+  for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
+    const batch = chunks.slice(i, i + EMBED_BATCH);
+
+    const vectors = await generateEmbeddings(batch);
+
+    const records = vectors.map((vector, j) => ({
+      id: `${documentId}_chunk_${i + j}`,
+      values: vector,
+      metadata: {
+        text: batch[j],
+        documentId,
+        chunkIndex: i + j,
+      },
+    }));
+
+    allRecords.push(...records);
   }
 
-  console.log(`Stored ${records.length} embeddings for doc ${documentId}`);
-  return records.length;
+  // ── Step 2: Upsert in Pinecone batches ───────────
+  for (let i = 0; i < allRecords.length; i += UPSERT_BATCH) {
+    const batch = allRecords.slice(i, i + UPSERT_BATCH);
+
+    await index.upsert(batch);
+
+    console.log(
+      `Upserted ${Math.min(i + UPSERT_BATCH, allRecords.length)}/${allRecords.length} vectors`,
+    );
+  }
+
+  console.log(`Stored ${allRecords.length} embeddings for doc ${documentId}`);
+
+  return allRecords.length;
 };
 
 // ── Delete Document Embeddings ────────────────────────
@@ -93,17 +107,17 @@ const deleteEmbeddings = async (documentId) => {
     // Hum jaante hain IDs ka format: documentId_chunk_0, 1, 2...
     // Pinecone se stats lo — kitne vectors hain
     const stats = await index.describeIndexStats();
-    console.log('Total vectors in index:', stats.totalRecordCount);
+    console.log("Total vectors in index:", stats.totalRecordCount);
 
     // Step 2: Query se IDs nikalo
     // Dummy vector se query karo — filter ke saath
     const dummyVector = new Array(1536).fill(0);
     const results = await index.query({
-      vector:          dummyVector,
-      topK:            1000, // Max fetch
-      filter:          { documentId: { $eq: documentId } },
+      vector: dummyVector,
+      topK: 1000, // Max fetch
+      filter: { documentId: { $eq: documentId } },
       includeMetadata: false,
-      includeValues:   false,
+      includeValues: false,
     });
 
     if (results.matches.length === 0) {
@@ -118,9 +132,8 @@ const deleteEmbeddings = async (documentId) => {
     await index.deleteMany(ids);
 
     console.log(`✅ Deleted ${ids.length} vectors for doc ${documentId}`);
-
   } catch (error) {
-    console.error('Delete embeddings error:', error.message);
+    console.error("Delete embeddings error:", error.message);
     throw error;
   }
 };

@@ -20,20 +20,28 @@ const processDocument = async (doc) => {
     doc.status = "processing";
     await doc.save();
 
+    // Text extract
     const rawText = await extractText(doc.fileType, doc.storedName);
     const cleanedText = cleanText(rawText);
+
+    // Chunks banao
     const chunks = await chunkText(cleanedText);
 
+    console.log(`Processing ${chunks.length} chunks for doc ${doc._id}`);
+
+    // Pinecone mein batch mein store karo — parallel nahi, sequential
+    // Large files ke liye memory issue avoid karo
     await storeEmbeddings(chunks, doc._id.toString());
 
+    // Summary generate karo — sirf top 5 chunks se (fast)
     const summaryResult = await ragGetAnswer(
-      `Provide a structured summary of this document with:
-       1. Main Topic
-       2. 5-7 Key Points in simple language
-       3. Important Terms
-       Keep it concise and student-friendly.`,
+      `Provide a brief structured summary with:
+       1. Main Topic (1 line)
+       2. Key Points (3-5 bullet points)
+       3. Important Terms (3-5 terms)
+       Be concise.`,
       doc._id.toString(),
-      10,
+      5, // Sirf 5 chunks — faster
     );
 
     doc.status = "ready";

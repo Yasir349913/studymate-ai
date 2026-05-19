@@ -19,6 +19,7 @@ const openai = new OpenAI({
 // Ek jagah define karo — agar model change karna ho
 // sirf yahan change karo, baaki sab automatically update
 const MODEL = "openrouter/free";
+// const MODEL = process.env.OPENROUTER_MODEL || "google/gemma-3-12b-it:free";
 
 // Base system prompt — general chat ke liye
 const BASE_SYSTEM_PROMPT = `You are StudyMate AI, a helpful study assistant.
@@ -65,69 +66,95 @@ const streamChatResponse = async (
   setSSEHeaders(res);
 
   let fullResponse = "";
+  let retryCount = 0;
+  const maxRetries = 2;
 
-  try {
-    const stream = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
-      stream: true,
-      max_tokens: 1000,
-      temperature: 0.7, // 0 = deterministic, 1 = creative
-      // 0.7 = good balance for study assistant
-    });
+  while (retryCount <= maxRetries) {
+    try {
+      const stream = await openai.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        stream: true,
+        max_tokens: 1000,
+        temperature: 0.7,
+      });
 
-    // Har chunk ke liye loop
-    for await (const chunk of stream) {
-      // Optional chaining (?.) — agar delta ya content undefined ho
-      // toh crash nahi hoga — empty string milega
-      const text = chunk.choices[0]?.delta?.content || "";
-
-      if (text) {
-        fullResponse += text;
-
-        // SSE format — ye exact format browser samajhta hai
-        // "data: " prefix zaroori hai
-        // "\n\n" = end of event signal
-        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      for await (const chunk of stream) {
+        const text = chunk.choices[0]?.delta?.content || "";
+        if (text) {
+          fullResponse += text;
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
       }
-    }
 
-    // Done signal — frontend ko pata chale stream khatam
+      // Success — loop se bahar niklo
+      break;
+    } catch (error) {
+      retryCount++;
+      console.error(
+        `OpenRouter streaming error (attempt ${retryCount}):`,
+        error.message,
+      );
+
+      if (retryCount > maxRetries) {
+        // Sab retries fail — user ko batao
+        if (!res.writableEnded) {
+          res.write(
+            `data: ${JSON.stringify({
+              text: "\n\nI'm having trouble connecting right now. Please try again in a moment.",
+            })}\n\n`,
+          );
+        }
+        break;
+      }
+
+      // 1 second wait — phir retry
+      await new Promise((r) => setTimeout(r, 1000));
+      console.log(`Retrying stream... attempt ${retryCount + 1}`);
+    }
+  }
+
+  if (!res.writableEnded) {
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
-
-    return fullResponse;
-  } catch (error) {
-    console.error("OpenRouter streaming error:", error);
-
-    // Agar headers already send ho gaye — normal error nahi bhej sakte
-    // SSE se error bhejo
-    if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify({ error: "AI service error" })}\n\n`);
-      res.end();
-    }
-
-    throw error;
   }
+
+  return fullResponse;
 };
 
 // ── Non-Streaming Response ───────────────────────────
 // RAG pipeline mein use hoga — wahan streaming nahi chahiye
 // Sirf final answer chahiye — jo chunks se bana ho
-const getChatResponse = async (messages, systemPrompt = BASE_SYSTEM_PROMPT) => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
-      max_tokens: 1000,
-      temperature: 0.7,
-    });
+const getChatResponse = async (
+  messages,
+  systemPrompt = BASE_SYSTEM_PROMPT,
+  maxTokens = 2000, // ← Increase kiya — truncation fix
+) => {
+  // 3 retry attempts with different temperatures
+  const attempts = [
+    { temperature: 0.3, max_tokens: maxTokens },
+    { temperature: 0.1, max_tokens: maxTokens },
+    { temperature: 0.5, max_tokens: maxTokens + 500 },
+  ];
 
-    return response.choices[0].message.content;
-  } catch (error) {
-    console.error("OpenRouter error:", error);
-    throw new Error("AI service unavailable");
+  for (const config of attempts) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        ...config,
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (content && content.length > 10) {
+        return content;
+      }
+    } catch (error) {
+      console.error("OpenRouter attempt failed:", error.message);
+    }
   }
+
+  throw new Error("AI service unavailable after retries");
 };
 
 module.exports = {

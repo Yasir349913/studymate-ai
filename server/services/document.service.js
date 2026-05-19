@@ -10,12 +10,25 @@ const extractFromPDF = async (storedName) => {
   const filePath = path.join(UPLOADS_DIR, storedName);
   const buffer = fs.readFileSync(filePath);
   const data = await pdfParse(buffer);
-
   const text = data.text?.trim();
-  if (!text || text.length < 50) {
+
+  if (!text || text.length < 200) {
     throw new Error(
-      "Could not extract text from PDF. " +
-        "Ensure it is a text-based PDF, not a scanned image.",
+      "This PDF appears to be scanned or image-based. " +
+        "StudyMate AI only supports text-based PDFs. " +
+        "Please ensure your PDF contains selectable text.",
+    );
+  }
+
+  const words = text.split(/\s+/).filter((w) => w.length > 1);
+  const wordDensity = words.length / (data.numpages || 1);
+
+  // ← DONO checks
+  if (words.length < 100 || wordDensity < 50) {
+    throw new Error(
+      "This PDF appears to be scanned or image-based. " +
+        "StudyMate AI only supports text-based PDFs. " +
+        "Please ensure your PDF contains selectable text.",
     );
   }
 
@@ -23,28 +36,27 @@ const extractFromPDF = async (storedName) => {
 };
 
 // ── PPTX Extract ─────────────────────────────────────
+// ── PPTX Extract ─────────────────────────────────────
 const extractFromPPTX = async (storedName) => {
   const filePath = path.join(UPLOADS_DIR, storedName);
-  const pptxParser = require("pptx-parser");
-  const result = await pptxParser(filePath);
+  const officeParser = require("officeparser");
 
-  const text = result
-    .map((slide) =>
-      slide.texts
-        ?.map((t) => t.value || "")
-        .filter(Boolean)
-        .join(" "),
-    )
-    .filter(Boolean)
-    .join("\n\n");
+  const result = await new Promise((resolve, reject) => {
+    officeParser.parseOffice(filePath, (data, err) => {
+      if (err) reject(err);
+      else resolve(data);
+    });
+  });
+
+  // officeparser object return kar sakta hai — string enforce karo
+  const text = typeof result === "string" ? result : JSON.stringify(result);
 
   if (!text || text.length < 50) {
     throw new Error(
-      "Could not extract text from PPTX. " +
-        "Ensure slides contain text, not just images.",
+      "Could not extract text from this PPTX. " +
+        "Ensure slides contain actual text, not just images or screenshots.",
     );
   }
-
   return text;
 };
 
@@ -61,11 +73,10 @@ const extractFromDOCX = async (storedName) => {
 
   if (!text || text.length < 50) {
     throw new Error(
-      "Could not extract text from DOCX. " +
-        "Ensure the document contains readable text.",
+      "Could not extract text from this Word document. " +
+        "Ensure the document contains readable text content.",
     );
   }
-
   return text;
 };
 

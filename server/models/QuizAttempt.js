@@ -9,7 +9,7 @@ const questionSchema = new mongoose.Schema(
     explanation: { type: String, required: true }, // Kyun sahi hai
     difficulty: {
       type: String,
-      enum: ["easy", "medium", "hard"],
+      enum: ["easy", "medium", "hard","mixed"],
       required: true,
     },
     // User ne kya answer diya — null matlab attempt nahi kiya

@@ -1,49 +1,47 @@
-const Flashcard = require('../models/Flashcard');
-const Document  = require('../models/Document');
-const { getChatResponse }               = require('../services/openai.service');
-const { retrieveChunks, formatContext } = require('../services/retrieval.service');
+const Flashcard = require("../models/Flashcard");
+const Document = require("../models/Document");
+const { getChatResponse } = require("../services/openai.service");
+const {
+  retrieveChunks,
+  formatContext,
+} = require("../services/retrieval.service");
 
 // ── Flashcard Prompt ──────────────────────────────────
-const buildFlashcardPrompt = (context) => `Generate 15 flashcard pairs based on the study notes below.
+const buildFlashcardPrompt = (
+  context,
+) => `Extract key terms from these study notes and create flashcards.
 
-Study Notes:
+NOTES:
 ${context}
 
-Return ONLY a valid JSON array. No markdown. No explanation. No extra text.
+OUTPUT FORMAT - Return ONLY this JSON array, nothing else:
+[{"term":"...","definition":"..."}]
 
-[
-  {
-    "term": "Key term or concept",
-    "definition": "Clear concise definition (1-2 sentences)"
-  }
-]
-
-Rules:
-- Terms = important vocabulary or concepts
-- Definitions = clear and student-friendly
-- Based ONLY on provided notes
-- Return exactly 15 pairs
-- ONLY the JSON array — nothing else`;
+RULES:
+1. Extract 10-15 important terms/concepts
+2. Definitions: 1-2 clear sentences
+3. NO markdown, NO extra text, ONLY the JSON array
+4. Keep definitions student-friendly`;
 
 // ── Parse Flashcard Response ──────────────────────────
 const parseFlashcardResponse = (response) => {
-  if (!response || typeof response !== 'string') {
-    console.error('Flashcard parse error: Empty response');
+  if (!response || typeof response !== "string") {
+    console.error("Flashcard parse error: Empty response");
     return null;
   }
 
   try {
     let cleaned = response
-      .replace(/```json/gi, '')
-      .replace(/```/gi, '')
+      .replace(/```json/gi, "")
+      .replace(/```/gi, "")
       .trim();
 
-    const startIndex = cleaned.indexOf('[');
-    const endIndex   = cleaned.lastIndexOf(']');
+    const startIndex = cleaned.indexOf("[");
+    const endIndex = cleaned.lastIndexOf("]");
 
     if (startIndex === -1 || endIndex === -1) {
-      console.error('Flashcard parse error: No JSON array found');
-      console.error('Response:', cleaned.slice(0, 300));
+      console.error("Flashcard parse error: No JSON array found");
+      console.error("Response:", cleaned.slice(0, 300));
       return null;
     }
 
@@ -58,19 +56,19 @@ const parseFlashcardResponse = (response) => {
 
     if (!Array.isArray(parsed)) return null;
 
-    const valid = parsed.filter((card) =>
-      card.term &&
-      typeof card.term === 'string' &&
-      card.definition &&
-      typeof card.definition === 'string'
+    const valid = parsed.filter(
+      (card) =>
+        card.term &&
+        typeof card.term === "string" &&
+        card.definition &&
+        typeof card.definition === "string",
     );
 
     console.log(`Valid flashcards: ${valid.length}/${parsed.length}`);
     return valid.length > 0 ? valid : null;
-
   } catch (error) {
-    console.error('Flashcard parse error:', error.message);
-    console.error('Response preview:', response?.slice(0, 300));
+    console.error("Flashcard parse error:", error.message);
+    console.error("Response preview:", response?.slice(0, 300));
     return null;
   }
 };
@@ -83,35 +81,35 @@ exports.generateFlashcards = async (req, res) => {
 
     const doc = await Document.findOne({ _id: documentId, userId });
     if (!doc) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
-    if (doc.status !== 'ready') {
-      return res.status(400).json({ error: 'Document is still processing' });
+    if (doc.status !== "ready") {
+      return res.status(400).json({ error: "Document is still processing" });
     }
 
     // Existing check — sirf generate ke liye, regenerate skip karega
     const existing = await Flashcard.findOne({ userId, documentId });
     if (existing) {
       return res.json({
-        flashcardId:  existing._id,
-        cards:        existing.cards,
-        totalCards:   existing.totalCards,
+        flashcardId: existing._id,
+        cards: existing.cards,
+        totalCards: existing.totalCards,
         learnedCards: existing.learnedCards,
       });
     }
 
     const chunks = await retrieveChunks(
-      'key terms definitions concepts vocabulary important',
+      "key terms definitions concepts vocabulary important",
       documentId,
-      15
+      15,
     );
 
     if (chunks.length === 0) {
-      return res.status(400).json({ error: 'Could not retrieve content' });
+      return res.status(400).json({ error: "Could not retrieve content" });
     }
 
     const context = formatContext(chunks);
-    const prompt  = buildFlashcardPrompt(context);
+    const prompt = buildFlashcardPrompt(context);
 
     // Retry logic — 3 attempts
     let cards = null;
@@ -120,12 +118,12 @@ exports.generateFlashcards = async (req, res) => {
       console.log(`Flashcard generation attempt ${attempt}/3`);
 
       const aiResponse = await getChatResponse(
-        [{ role: 'user', content: prompt }],
-        'You are a flashcard generator. Respond with valid JSON array only. No markdown. No extra text.'
+        [{ role: "user", content: prompt }],
+        "You are a flashcard generator. Respond with valid JSON array only. No markdown. No extra text.",
       );
 
-      console.log('Response length:', aiResponse?.length);
-      console.log('Response preview:', aiResponse?.slice(0, 200));
+      console.log("Response length:", aiResponse?.length);
+      console.log("Response preview:", aiResponse?.slice(0, 200));
 
       cards = parseFlashcardResponse(aiResponse);
 
@@ -139,27 +137,26 @@ exports.generateFlashcards = async (req, res) => {
 
     if (!cards || cards.length === 0) {
       return res.status(500).json({
-        error: 'Failed to generate flashcards. Please try again.',
+        error: "Failed to generate flashcards. Please try again.",
       });
     }
 
     const flashcardSet = await Flashcard.create({
       userId,
       documentId,
-      cards:      cards.map((c) => ({ ...c, status: 'new' })),
+      cards: cards.map((c) => ({ ...c, status: "new" })),
       totalCards: cards.length,
     });
 
     res.status(201).json({
-      flashcardId:  flashcardSet._id,
-      cards:        flashcardSet.cards,
-      totalCards:   flashcardSet.totalCards,
+      flashcardId: flashcardSet._id,
+      cards: flashcardSet.cards,
+      totalCards: flashcardSet.totalCards,
       learnedCards: 0,
     });
-
   } catch (error) {
-    console.error('Generate flashcards error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Generate flashcards error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -175,24 +172,24 @@ exports.regenerateFlashcards = async (req, res) => {
     // Fresh generate karo
     const doc = await Document.findOne({ _id: documentId, userId });
     if (!doc) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
-    if (doc.status !== 'ready') {
-      return res.status(400).json({ error: 'Document is still processing' });
+    if (doc.status !== "ready") {
+      return res.status(400).json({ error: "Document is still processing" });
     }
 
     const chunks = await retrieveChunks(
-      'key terms definitions concepts vocabulary important',
+      "key terms definitions concepts vocabulary important",
       documentId,
-      15
+      15,
     );
 
     if (chunks.length === 0) {
-      return res.status(400).json({ error: 'Could not retrieve content' });
+      return res.status(400).json({ error: "Could not retrieve content" });
     }
 
     const context = formatContext(chunks);
-    const prompt  = buildFlashcardPrompt(context);
+    const prompt = buildFlashcardPrompt(context);
 
     let cards = null;
 
@@ -200,8 +197,8 @@ exports.regenerateFlashcards = async (req, res) => {
       console.log(`Regenerate attempt ${attempt}/3`);
 
       const aiResponse = await getChatResponse(
-        [{ role: 'user', content: prompt }],
-        'You are a flashcard generator. Respond with valid JSON array only. No markdown. No extra text.'
+        [{ role: "user", content: prompt }],
+        "You are a flashcard generator. Respond with valid JSON array only. No markdown. No extra text.",
       );
 
       cards = parseFlashcardResponse(aiResponse);
@@ -214,27 +211,26 @@ exports.regenerateFlashcards = async (req, res) => {
 
     if (!cards || cards.length === 0) {
       return res.status(500).json({
-        error: 'Failed to regenerate flashcards. Please try again.',
+        error: "Failed to regenerate flashcards. Please try again.",
       });
     }
 
     const flashcardSet = await Flashcard.create({
       userId,
       documentId,
-      cards:      cards.map((c) => ({ ...c, status: 'new' })),
+      cards: cards.map((c) => ({ ...c, status: "new" })),
       totalCards: cards.length,
     });
 
     res.status(201).json({
-      flashcardId:  flashcardSet._id,
-      cards:        flashcardSet.cards,
-      totalCards:   flashcardSet.totalCards,
+      flashcardId: flashcardSet._id,
+      cards: flashcardSet.cards,
+      totalCards: flashcardSet.totalCards,
       learnedCards: 0,
     });
-
   } catch (error) {
-    console.error('Regenerate flashcards error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Regenerate flashcards error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -245,21 +241,21 @@ exports.updateCardStatus = async (req, res) => {
     const { cardIndex, status } = req.body;
     const userId = req.userId;
 
-    if (!['new', 'learning', 'learned'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
+    if (!["new", "learning", "learned"].includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
     }
 
     const flashcard = await Flashcard.findOne({ _id: flashcardId, userId });
     if (!flashcard) {
-      return res.status(404).json({ error: 'Flashcard set not found' });
+      return res.status(404).json({ error: "Flashcard set not found" });
     }
     if (cardIndex >= flashcard.cards.length) {
-      return res.status(400).json({ error: 'Invalid card index' });
+      return res.status(400).json({ error: "Invalid card index" });
     }
 
     flashcard.cards[cardIndex].status = status;
     flashcard.learnedCards = flashcard.cards.filter(
-      (c) => c.status === 'learned'
+      (c) => c.status === "learned",
     ).length;
 
     await flashcard.save();
@@ -268,13 +264,14 @@ exports.updateCardStatus = async (req, res) => {
       cardIndex,
       status,
       learnedCards: flashcard.learnedCards,
-      totalCards:   flashcard.totalCards,
-      progress:     Math.round((flashcard.learnedCards / flashcard.totalCards) * 100),
+      totalCards: flashcard.totalCards,
+      progress: Math.round(
+        (flashcard.learnedCards / flashcard.totalCards) * 100,
+      ),
     });
-
   } catch (error) {
-    console.error('Update card error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Update card error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -284,24 +281,27 @@ exports.getFlashcards = async (req, res) => {
     const { documentId } = req.params;
 
     const flashcard = await Flashcard.findOne({
-      userId:     req.userId,
+      userId: req.userId,
       documentId,
     }).lean();
 
     if (!flashcard) {
-      return res.status(404).json({ error: 'No flashcards found for this document' });
+      return res
+        .status(404)
+        .json({ error: "No flashcards found for this document" });
     }
 
     res.json({
-      flashcardId:  flashcard._id,
-      cards:        flashcard.cards,
-      totalCards:   flashcard.totalCards,
+      flashcardId: flashcard._id,
+      cards: flashcard.cards,
+      totalCards: flashcard.totalCards,
       learnedCards: flashcard.learnedCards,
-      progress:     Math.round((flashcard.learnedCards / flashcard.totalCards) * 100),
+      progress: Math.round(
+        (flashcard.learnedCards / flashcard.totalCards) * 100,
+      ),
     });
-
   } catch (error) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -309,21 +309,24 @@ exports.getFlashcards = async (req, res) => {
 exports.resetFlashcards = async (req, res) => {
   try {
     const flashcard = await Flashcard.findOne({
-      _id:    req.params.flashcardId,
+      _id: req.params.flashcardId,
       userId: req.userId,
     });
 
     if (!flashcard) {
-      return res.status(404).json({ error: 'Flashcard set not found' });
+      return res.status(404).json({ error: "Flashcard set not found" });
     }
 
-    flashcard.cards        = flashcard.cards.map((c) => ({ ...c._doc, status: 'new' }));
+    flashcard.cards = flashcard.cards.map((c) => ({
+      ...c._doc,
+      status: "new",
+    }));
     flashcard.learnedCards = 0;
     await flashcard.save();
 
-    res.json({ message: 'Flashcards reset successfully' });
+    res.json({ message: "Flashcards reset successfully" });
   } catch (error) {
-    console.error('Reset flashcards error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Reset flashcards error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 };

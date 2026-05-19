@@ -9,40 +9,38 @@ const {
 // ── Quiz Generation Prompt ────────────────────────────
 const buildQuizPrompt = (context, count, difficulty) => {
   const difficultyGuide = {
-    easy: "Factual questions — direct answers from the text",
-    medium: "Conceptual questions — understanding and explanation",
-    hard: "Application questions — apply concepts to scenarios",
-    mixed: "Mix of factual, conceptual, and application questions",
+    easy: "Simple factual recall questions",
+    medium: "Understanding and explanation questions",
+    hard: "Application and analysis questions",
+    mixed: "Mix of easy, medium, and hard questions",
   };
 
-  return `Generate exactly ${count} multiple choice questions based on the study notes below.
+  // Count per difficulty for mixed
+  const easyCount = difficulty === "mixed" ? Math.ceil(count * 0.3) : 0;
+  const medCount = difficulty === "mixed" ? Math.ceil(count * 0.4) : 0;
+  const hardCount = difficulty === "mixed" ? count - easyCount - medCount : 0;
 
-Difficulty: ${difficulty} — ${difficultyGuide[difficulty]}
+  return `Generate ${count} MCQ questions from these study notes.
+Type: ${difficultyGuide[difficulty]}
+${difficulty === "mixed" ? `(${easyCount} easy, ${medCount} medium, ${hardCount} hard)` : ""}
 
-Study Notes:
+NOTES:
 ${context}
 
-Return ONLY a valid JSON array. No markdown. No explanation. No extra text before or after.
+OUTPUT FORMAT - Return ONLY this JSON array, nothing else:
+[{"question":"...","options":["A","B","C","D"],"correctAnswer":0,"explanation":"...","difficulty":"easy"}]
 
-[
-  {
-    "question": "Question text?",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correctAnswer": 0,
-    "explanation": "Why this is correct",
-    "difficulty": "${difficulty === "mixed" ? "easy" : difficulty}"
-  }
-]
-
-Strict rules:
-- correctAnswer = index 0 to 3
-- Exactly 4 options per question
-- Based ONLY on provided notes
-- Return exactly ${count} questions
-- ONLY the JSON array — nothing else`;
+RULES:
+1. correctAnswer = 0,1,2,3 (index of correct option)
+2. Each question needs exactly 4 options
+3. Keep questions short and clear
+4. Base ONLY on provided notes
+5. Return exactly ${count} questions
+6. NO markdown, NO extra text, ONLY the JSON array`;
 };
 
 // ── Parse AI Response ─────────────────────────────────
+
 const parseQuizResponse = (response) => {
   if (!response || typeof response !== "string") {
     console.error("Parse error: Empty or invalid response");
@@ -50,13 +48,11 @@ const parseQuizResponse = (response) => {
   }
 
   try {
-    // Markdown + extra text remove karo
     let cleaned = response
       .replace(/```json/gi, "")
       .replace(/```/gi, "")
       .trim();
 
-    // JSON array boundaries find karo
     const startIndex = cleaned.indexOf("[");
     const endIndex = cleaned.lastIndexOf("]");
 
@@ -68,11 +64,16 @@ const parseQuizResponse = (response) => {
 
     cleaned = cleaned.slice(startIndex, endIndex + 1);
 
-    // Invalid characters fix karo
-    // AI kabhi kabhi smart quotes use karta hai
+    // Smart quotes fix
     cleaned = cleaned
       .replace(/[\u2018\u2019]/g, "'")
       .replace(/[\u201C\u201D]/g, '"');
+
+    // Markdown formatting remove karo
+    cleaned = cleaned
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/`([^`]+)`/g, "$1");
 
     const parsed = JSON.parse(cleaned);
 
@@ -103,7 +104,6 @@ const parseQuizResponse = (response) => {
     return null;
   }
 };
-
 // ── GENERATE QUIZ ─────────────────────────────────────
 exports.generateQuiz = async (req, res) => {
   try {
