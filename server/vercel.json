@@ -1,10 +1,15 @@
 {
-  "functions": {
-    "server/api/*.js": {
-      "runtime": "nodejs18.x"
+  "version": 2,
+  "builds": [
+    {
+      "src": "server/index.js",
+      "use": "@vercel/node"
     }
-  },
+  ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/server/api/$1" }
+    {
+      "src": "/(.*)",
+      "dest": "server/index.js"
+    }
   ]
 }
