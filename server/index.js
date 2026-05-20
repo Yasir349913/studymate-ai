@@ -12,7 +12,27 @@ const app = express();
 
 // ── Middleware ────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      const allowedOrigins = [
+        "http://localhost:5173",
+        "https://studymate-ai-v9zx.vercel.app",
+        process.env.CLIENT_URL,
+      ].filter(Boolean);
+
+      // Allow requests with no origin (mobile apps, Postman)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
 app.use(cookieParser());
 app.use(express.json({ limit: "10mb" }));
 
@@ -36,6 +56,7 @@ app.use("/api/chat", require("./routes/chat.routes"));
 app.use("/api/documents", require("./routes/document.routes")); // ← Phase 2
 app.use("/api/quiz", require("./routes/quiz.routes")); // ← Naya
 app.use("/api/flashcards", require("./routes/flashcard.routes")); // ← Naya
+app.get("/health", (req, res) => res.json({ status: "ok" }));
 // ── 404 ───────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });

@@ -10,7 +10,7 @@ const openai = new OpenAI({
   defaultHeaders: {
     // Ye headers OpenRouter require karta hai
     // Tumhari app identify hoti hai dashboard mein
-    "HTTP-Referer": process.env.CLIENT_URL || "http://localhost:3000",
+    "HTTP-Referer": process.env.CLIENT_URL || "http://localhost:5173",
     "X-Title": "StudyMate AI",
   },
 });
