@@ -158,8 +158,8 @@ Final Grounded Answer
 
 <ul>
   <li><b>Email:</b> your-email@example.com</li>
-  <li><b>LinkedIn:</b> your-linkedin-profile</li>
-  <li><b>GitHub:</b> your-github-profile</li>
+  <li><b>LinkedIn:</b>https://www.linkedin.com/in/yasir-maqsood/</li>
+  <li><b>GitHub:</b>https://github.com/Yasir349913/studymate-ai</li>
 </ul>
 
 <hr/>
