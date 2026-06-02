@@ -157,7 +157,7 @@ Final Grounded Answer
 <h2>📫 Contact</h2>
 
 <ul>
-  <li><b>Email:</b> your-email@example.com</li>
+  <li><b>Email:</b> yasirmaqsood534@gmail.com</li>
   <li><b>LinkedIn:</b>https://www.linkedin.com/in/yasir-maqsood/</li>
   <li><b>GitHub:</b>https://github.com/Yasir349913/studymate-ai</li>
 </ul>
